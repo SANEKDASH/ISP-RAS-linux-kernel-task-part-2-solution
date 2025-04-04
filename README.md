@@ -15,16 +15,16 @@ Call Trace:
  should_fail.cold+0x5/0xa lib/fault-inject.c:146
 WARNING: CPU: 1 PID: 1418 at arch/x86/mm/pat/memtype.c:1019 get_pat_info+0x216/0x270 arch/x86/mm/pat/memtype.c:1019
  should_failslab+0x5/0x20 mm/slab_common.c:1200
- slab_pre_alloc_hook mm/slab.h:515 [inline] // fault injected here. RETURN: NULL
- slab_alloc_node mm/slub.c:2821 [inline]    // 		 		  		RETURN: NULL
- slab_alloc mm/slub.c:2904 [inline]	        //						RETURN: NULL
- kmem_cache_alloc_trace+0x55/0x2f0 mm/slub.c:2921 //				RETURN: NULL
+ slab_pre_alloc_hook mm/slab.h:515 [inline]
+ slab_alloc_node mm/slub.c:2821 [inline]
+ slab_alloc mm/slub.c:2904 [inline]
+ kmem_cache_alloc_trace+0x55/0x2f0 mm/slub.c:2921
+ io_uring_alloc_task_context+0x99Socket connected tcp:127.0.0.1:49381,server=on <-> 127.0.0.1:49460
+Modules linked in:
+ __io_uring_add_tctx_node+0x2c6/0x520 io_uring/io_uring.c:9590
 
- io_uring_alloc_task_context+0x99  			//RETURN: -ENOMEM = error
- 
- __io_uring_add_tctx_node+0x2c6/0x520 io_uring/io_uring.c:9590 // tctx = NULL ==> return: -ENOMEM
-io_uring_add_tctx_node io_uring/io_uring.c:9635 [inline] return: -ENOMEM
- io_uring_install_fd io_uring/io_uring.c:10159 [inline] return: -ENOMEM
+ io_uring_add_tctx_node io_uring/io_uring.c:9635 [inline]
+ io_uring_install_fd io_uring/io_uring.c:10159 [inline]
  io_uring_create io_uring/io_uring.c:10292 [inline]
  io_uring_setup+0x1fab/0x2980 io_uring/io_uring.c:10329
 CPU: 1 PID: 1418 Comm: syz-executor.3 Not tainted 5.10.234-syzkaller #0
@@ -52,8 +52,7 @@ FS:  00007f309921c700(0000) GS:ffff8882bac00000(0000) knlGS:0000000000000000
 CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
 CR2: 0000000000000000 CR3: 000000010cb22000 CR4: 0000000000350ee0
 Call Trace:
- untrack_pfn+0xdc/0x240 arch/x86/mm/pat/memtype.c:1121  // WARNING in get_pat_info()
- 														   called here 														   
+ untrack_pfn+0xdc/0x240 arch/x86/mm/pat/memtype.c:1121
  unmap_single_vma+0x17b/0x2b0 mm/memory.c:1500
  zap_page_range_single+0x2bd/0x430 mm/memory.c:1604
  remap_pfn_range_notrack+0x9af/0xc60 mm/memory.c:2364
@@ -210,6 +209,8 @@ static int get_pat_info(struct vm_area_struct *vma, resource_size_t *paddr,
 	return -EINVAL;
 }
 ```
+
+Код этой функции один и тот же во всех вышеперечисленных версиях ядра, так что это облегчает поиск ошибки. 
 
 Моя задача:
  - Найти причину срабатывания этого варнинга.
