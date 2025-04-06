@@ -217,7 +217,7 @@ static int get_pat_info(struct vm_area_struct *vma, resource_size_t *paddr,
 
 Моя задача на данный момент - найти причину, по которой срабатывает этот варнинг.
 
-# Анализ варнинга
+## Анализ варнинга
 
 Код, который объединяет их всех:
 ```C
@@ -250,10 +250,10 @@ void *mmap(void *addr, size_t length, int prot, int flags,
 
 Сначала я скачал запакованный исходный код ядра, находящийся по [этой ссылке](https://git.linuxtesting.ru/pub/scm/linux/kernel/git/lvc/linux-stable.git/tag/?h=v5.10.233-lvc41)
 
-Далее, заменив дефолтный конфигурационный файл ядра, на (тот, что шел в комплекте с даннымы от syzkaller'а,)[https://github.com/SANEKDASH/ISP-RAS-linux-kernel-task-part-2-solution/blob/main/reproducers/5.10.233/kernel-config.0]
+Далее, заменив дефолтный конфигурационный файл ядра, на [тот, что шел в комплекте с даннымы от syzkaller'а](https://github.com/SANEKDASH/ISP-RAS-linux-kernel-task-part-2-solution/blob/main/reproducers/5.10.233/kernel-config.0),
 я скомпилировал ядро.
 
-Затем в соответствии с (документацией syzkaller)[https://github.com/google/syzkaller/blob/master/docs/linux/setup_ubuntu-host_qemu-vm_x86-64-kernel.md]
+Затем в соответствии с [документацией syzkaller](https://github.com/google/syzkaller/blob/master/docs/linux/setup_ubuntu-host_qemu-vm_x86-64-kernel.md)
 я получил образ системы и ssh ключ для доступа к ssh серверу, который будет запущен qemu.
 
 На этом этапе запустил ядро на виртуальной машине qemu с помощью команды:
@@ -410,13 +410,19 @@ target remote:1234
 
 Как мне кажется, эта трасса имеет больше смысла, тем те, что были изначально.
 
+Посидев в gdb какое-то время, я так и не понял, в чем заключается ошибка реализации.
+Это натолкнуло меня на мысль, что здесь есть ошибка в идейном плане. 
+И я начал разбираться в этой теме.
+
+## Анализ обсуждения
+
 В этой трассе есть проблема о которой я узнал из [обсуждения](https://lore.kernel.org/all/262aa19c-59fe-420a-aeae-0b1866a3e36b@redhat.com/T/#u).
 Изобразим трассу следующим образом:
 ```
 remap_pfn_range
   remap_pfn_range_notrack
     remap_pfn_range_internal
-      remap_p4d_range	// page allocation can failed here
+      remap_p4d_range	// fault injection happens here
     zap_page_range_single
       unmap_single_vma
         untrack_pfn
@@ -428,5 +434,5 @@ remap_pfn_range
 
 По этому поводу был выпущен [коммит](https://lore.kernel.org/all/20240712144244.3090089-1-peterx@redhat.com/T/#u).
 
-# Итог
+## Итог
 Судя по всему мы имеем дело с устаревшей проблемой.
