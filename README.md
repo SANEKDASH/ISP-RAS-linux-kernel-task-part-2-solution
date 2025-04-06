@@ -410,109 +410,23 @@ target remote:1234
 
 Как мне кажется, эта трасса имеет больше смысла, тем те, что были изначально.
 
-Как я понял, анализ стоит начать отсюда:
-```C
-int remap_pfn_range_notrack(struct vm_area_struct *vma, unsigned long addr,
-		unsigned long pfn, unsigned long size, pgprot_t prot)
-{
-	int error = remap_pfn_range_internal(vma, addr, pfn, size, prot); // Здесь произошел fault injection 
-			  								  			 	   		  // remap_pfn_range_internal() вернул ошибку.
-	if (!error)
-		return 0;
-
-	/*
-	 * A partial pfn range mapping is dangerous: it does not
-	 * maintain page reference counts, and callers may free
-	 * pages due to the error. So zap it early.
-	 */
-	zap_page_range_single(vma, addr, size, NULL);
-	return error;
-}
+В этой трассе есть проблема о которой я узнал из [обсуждения](https://lore.kernel.org/all/262aa19c-59fe-420a-aeae-0b1866a3e36b@redhat.com/T/#u).
+Изобразим трассу следующим образом:
 ```
-
-Теперь взглянем на zap_page_range_single():
-```C
-static void zap_page_range_single(struct vm_area_struct *vma, unsigned long address,
-		unsigned long size, struct zap_details *details)
-{
-	struct mmu_notifier_range range;
-	struct mmu_gather tlb;
-
-	lru_add_drain();
-	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, vma, vma->vm_mm,
-				address, address + size);
-	tlb_gather_mmu(&tlb, vma->vm_mm, address, range.end);
-	update_hiwater_rss(vma->vm_mm);
-	mmu_notifier_invalidate_range_start(&range);
-	unmap_single_vma(&tlb, vma, address, range.end, details); // Нам сюда
-	mmu_notifier_invalidate_range_end(&range);
-	tlb_finish_mmu(&tlb, address, range.end);
-}
+remap_pfn_range
+  remap_pfn_range_notrack
+    remap_pfn_range_internal
+      remap_p4d_range	// page allocation can failed here
+    zap_page_range_single
+      unmap_single_vma
+        untrack_pfn
+          get_pat_info
+            WARN_ON_ONCE(1);
 ```
-```C
-static void unmap_single_vma(struct mmu_gather *tlb,
-		struct vm_area_struct *vma, unsigned long start_addr,
-		unsigned long end_addr,
-		struct zap_details *details)
-{
-	unsigned long start = max(vma->vm_start, start_addr);
-	unsigned long end;
+Из прочитанного я понял следующее: untrack_pfn() не должен вызываться в этой функции, так как
+драйвера утройств должны начинать отслеживать pfn в mmap() и переставать в munmap().
 
-	if (start >= vma->vm_end)
-		return;
-	end = min(vma->vm_end, end_addr);
-	if (end <= vma->vm_start)
-		return;
+По этому поводу был выпущен [коммит](https://lore.kernel.org/all/20240712144244.3090089-1-peterx@redhat.com/T/#u).
 
-	if (vma->vm_file)
-		uprobe_munmap(vma, start, end);
-
-	if (unlikely(vma->vm_flags & VM_PFNMAP))
-		untrack_pfn(vma, 0, 0);             // Теперь сюда
-
-	if (start != end) {
-		if (unlikely(is_vm_hugetlb_page(vma))) {
-			/*
-			 * It is undesirable to test vma->vm_file as it
-			 * should be non-null for valid hugetlb area.
-			 * However, vm_file will be NULL in the error
-			 * cleanup path of mmap_region. When
-			 * hugetlbfs ->mmap method fails,
-			 * mmap_region() nullifies vma->vm_file
-			 * before calling this function to clean up.
-			 * Since no pte has actually been setup, it is
-			 * safe to do nothing in this case.
-			 */
-			if (vma->vm_file) {
-				i_mmap_lock_write(vma->vm_file->f_mapping);
-				__unmap_hugepage_range_final(tlb, vma, start, end, NULL);
-				i_mmap_unlock_write(vma->vm_file->f_mapping);
-			}
-		} else
-			unmap_page_range(tlb, vma, start, end, details);
-	}
-}
-
-```
-
-```C
-void untrack_pfn(struct vm_area_struct *vma, unsigned long pfn,
-		 unsigned long size)
-{
-	resource_size_t paddr;
-
-	if (vma && !(vma->vm_flags & VM_PAT))
-		return;
-
-	/* free the chunk starting from pfn or the whole chunk */
-	paddr = (resource_size_t)pfn << PAGE_SHIFT;
-	if (!paddr && !size) {
-		if (get_pat_info(vma, &paddr, NULL))
-			return;
-		size = vma->vm_end - vma->vm_start;
-	}
-	free_pfn_range(paddr, size);
-	if (vma)
-		vma->vm_flags &= ~VM_PAT;
-}
-```
+# Итог
+Судя по всему мы имеем дело с устаревшей проблемой.
